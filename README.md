@@ -22,6 +22,16 @@ Your final app should:
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
 
+## Smarter Scheduling
+
+This repo now includes a “smarter” backend scheduler (see `pawpal_system.py`, summarized in `AGENTS.md`) that goes beyond simple priority sorting:
+
+- **Time-budget planning with explanations**: builds a `DailyPlan` under a minutes-available constraint and records reasons for scheduled vs skipped tasks.
+- **Due-date gating + completion filtering**: centralizes “is this task due today?” logic (so completed/not-due tasks don’t reappear).
+- **Recurring tasks**: `daily`/`weekly` tasks automatically spawn their next instance when completed.
+- **Time-of-day ordering + lightweight conflict warnings**: tasks can optionally include a `"HH:MM"` time; the plan can surface non-fatal warnings when multiple tasks share the same start time.
+- **Test coverage + CLI harness**: key behaviors are covered by pytest (`tests/`) and can be exercised via `main.py` scenarios.
+
 ## Getting started
 
 ### Setup

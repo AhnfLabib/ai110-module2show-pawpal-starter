@@ -28,8 +28,8 @@
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+- **Tradeoff:** The scheduler uses a **greedy packer** (sort by priority, then add tasks until the time budget is full) instead of searching for the globally “best” combination of tasks.
+- **Why reasonable:** It’s simple, fast, and easy to explain (“higher priority first; skip what doesn’t fit”), which matters more for a daily helper app than perfectly optimal packing.
 
 ---
 

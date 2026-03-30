@@ -16,13 +16,15 @@ from pawpal_system import (
 def test_task_defaults_and_completion_status():
     t = CareTask(title="Feed", duration_minutes=5, priority="high", id="t1")
     assert t.frequency == TaskFrequency.once
+    assert t.due_day is None
     assert t.completed is False
     assert t.last_completed_day is None
 
     d = date(2026, 3, 30)
-    t.mark_completed(day=d)
+    spawned = t.mark_completed(day=d)
     assert t.completed is True
     assert t.last_completed_day == d
+    assert spawned is None
 
     t.mark_incomplete()
     assert t.completed is False
@@ -52,6 +54,66 @@ def test_task_completion_default_day_and_pet_filters_completed():
 
     assert [t.id for t in pet.list_tasks(include_completed=False)] == ["t2"]
 
+
+def test_daily_task_completion_spawns_next_instance_with_due_date():
+    d = date(2026, 3, 30)
+    t = CareTask(
+        title="Feed",
+        duration_minutes=5,
+        priority="high",
+        id="t1",
+        frequency=TaskFrequency.daily,
+    )
+
+    spawned = t.mark_completed(day=d)
+    assert spawned is not None
+    assert spawned.completed is False
+    assert spawned.last_completed_day is None
+    assert spawned.frequency == TaskFrequency.daily
+    assert spawned.due_day == date(2026, 3, 31)
+    assert spawned.id == "t1:2026-03-31"
+
+
+def test_weekly_task_completion_spawns_next_instance_with_due_date():
+    d = date(2026, 3, 30)
+    t = CareTask(
+        title="Deep clean bowl",
+        duration_minutes=10,
+        priority="medium",
+        id="w1",
+        frequency=TaskFrequency.weekly,
+    )
+
+    spawned = t.mark_completed(day=d)
+    assert spawned is not None
+    assert spawned.due_day == date(2026, 4, 6)
+    assert spawned.id == "w1:2026-04-06"
+
+
+def test_scheduler_filters_out_tasks_not_due_yet():
+    owner = Owner(name="Ahnaf")
+    pet = Pet(name="Mochi", species="cat")
+    d = date(2026, 3, 30)
+
+    future = CareTask(
+        title="Future task",
+        duration_minutes=5,
+        priority="high",
+        id="f1",
+        frequency=TaskFrequency.once,
+        due_day=date(2026, 3, 31),
+    )
+    due_today = CareTask(
+        title="Due today",
+        duration_minutes=5,
+        priority="high",
+        id="t1",
+        frequency=TaskFrequency.once,
+        due_day=d,
+    )
+
+    plan = Scheduler().build_plan(owner, pet, [future, due_today], DailyConstraint(minutes_available=30, day=d))
+    assert [item.task.id for item in plan.items] == ["t1"]
 
 def test_pet_add_task_rejects_duplicate_id():
     pet = Pet(name="Mochi", species="cat")
