@@ -4,8 +4,12 @@
 
 **a. Initial design**
 
-- Briefly describe your initial UML design.
-- What classes did you include, and what responsibilities did you assign to each?
+- **UML:** Domain objects (`Owner`, `Pet`, `CareTask`) plus a **`Scheduler`** that reads a **daily time budget** and outputs a **`DailyPlan`** (ordered tasks + short **reasons**). UI only displays what the scheduler returns.
+
+- **Classes:** `Owner`/`Pet` — basic info and preferences; `CareTask` — title, duration, priority; `DailyConstraint` (or fields on owner) — minutes available; `DailyPlan` — scheduled order; `Scheduler` — pick/fit tasks and explain tradeoffs (e.g. priority vs leftover time).
+
+
+
 
 **b. Design changes**
 
