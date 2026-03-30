@@ -13,8 +13,9 @@
 
 **b. Design changes**
 
-- Did your design change during implementation?
-- If yes, describe at least one change and why you made it.
+- **Yes.** After comparing the PRD/UML/implementation in `DESIGN_CRITIQUE.md`, I tightened the design in a few places to reduce ambiguity and future bugs.
+- **Preferences became a small contract (not just a dict):** define a couple of keys (e.g., keyword boosts/caps) and apply them in one place in the scheduler, with reasons + a test, so “preferences” is real behavior.
+- **Clarified relationships + ordering:** decide whether `Owner` actually stores `pets` (or the UI owns that), and keep **one source of truth** for task ordering (avoid both `CareTask.__lt__` and separate scheduler sorting drifting apart). I also noted the need for stable `CareTask.id` to support edit, and consistent “why included/why skipped” output for a greedy packer.
 
 ---
 

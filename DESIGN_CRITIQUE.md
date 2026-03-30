@@ -42,9 +42,9 @@ Legend: **Yes** = explicitly covered · **Partial** = implied or incomplete · *
 | Consider priority | Yes (`CareTask`, `priority_score`, ordering) | Partial (UI only) | |
 | Consider owner preferences | Partial (`preferences` dict; how it affects sort not shown) | No | Define how `Scheduler` reads preferences |
 | Basic owner + pet info | Yes (`Owner`, `Pet`) | Partial (`app.py` inputs, not wired to classes) | |
-| Add / edit tasks | — (domain diagram only) | Partial (add only in starter; no domain objects) | Editing implies stable `id` on `CareTask` |
+| Add / edit tasks | Partial (`CareTask.id` exists but lifecycle not modeled) | Partial (add only in starter; no domain objects) | Editing implies stable `id` on `CareTask` and UI → domain mapping |
 | Generate daily plan from constraints + priorities | Yes (`Scheduler.build_plan`) | No | |
-| Display plan + reasoning | Partial (`DailyPlan`, `PlanItem.reason`) | No | UI should consume `summary()` / `iter_with_reasons()` |
+| Display plan + reasoning | Partial (`DailyPlan`, `PlanItem.reason`) | No | Consider adding plan traceability (pet/day) if needed for display text |
 | Tests for key scheduling behaviors | — | No | Prefer pure `Scheduler` tests, no Streamlit |
 
 *Refresh the “Implementation” column whenever code changes.*
@@ -61,11 +61,27 @@ Legend: **Yes** = explicitly covered · **Partial** = implied or incomplete · *
 
 ## Gaps and risks (prioritized)
 
-1. **Preferences are not operational in the diagram** — `Owner.preferences` is a `dict` with no documented keys or methods. Decide how `_sort_candidates` (or `build_plan`) consumes them; update UML or add a short “preference contract” bullet here.
-2. **Add/edit tasks vs domain-only UML** — The diagram does not model where tasks live between requests. Accept as boundary, or add a note when you introduce persistence / session state tied to `CareTask.id`.
-3. **Task kinds from scenario** — Walks, meds, grooming, etc. are only implied by `title`. Enough for v1; revisit if rules become category-based.
-4. **Traceability** — `DailyPlan` does not reference `Pet` or `Owner`. Fine if plans are anonymous snapshots; add fields if you need audit text (“Plan for Mochi on 2026-03-30”).
-5. **Tests** — PRD requires them; keep scheduling logic importable without Streamlit so tests stay fast and deterministic.
+1. **Preferences are not operational (yet)** — `Owner.preferences` is a `dict` with no contract. If you want “preferences” to count as implemented, you need: (a) defined keys, and (b) a single place in `Scheduler` where those keys influence ordering/selection, and (c) a test that proves it.
+2. **Owner↔Pet relationship mismatch (UML vs code)** — UML models `Owner cares_for Pets`, but `pawpal_system.py` currently has no `Owner.pets`. Decide whether this relationship is *stored in domain objects* (add `Owner.pets`) or *managed externally by UI/state* (then adjust UML/notes so it’s not misleading).
+3. **Two ordering mechanisms can diverge** — UML/code provide both `CareTask.__lt__` and a planned `_sort_candidates`. If both exist, it’s easy to accidentally use different rules in different codepaths (e.g., `sorted(tasks)` vs `_sort_candidates`). Pick a single “source of truth” for ordering.
+4. **Add/edit tasks needs stable identity** — `CareTask.id` exists but defaults to empty; editing implies IDs are stable and unique per task across Streamlit reruns/session state. If IDs aren’t stable, “edit” becomes error-prone.
+5. **Packing strategy can surprise users** — A greedy “sort then fill” algorithm is simplest, but can produce unintuitive outcomes (one long high-priority task blocks many shorter tasks). This isn’t wrong, but it must be explained consistently via `PlanItem.reason` / `_explain_choice`.
+6. **Validation gaps** — Durations and budgets aren’t constrained in the domain model; negative/zero values can break packing logic and reasons. Decide where validation lives (domain constructors vs scheduler).
+7. **Traceability** — `DailyPlan` doesn’t carry `pet`/`day`/`constraint`. Fine for a pure output object, but the UI may want “Plan for {pet} on {day}” without rebuilding context elsewhere.
+8. **Tests** — PRD requires them; keep scheduling logic importable without Streamlit so tests stay fast and deterministic.
+
+---
+
+## Preference contract (define before implementing “preferences”)
+
+Keep this intentionally small; add keys only when you have a behavior + test.
+
+- **Scope**: preferences affect **ordering** (via `_sort_candidates`) and/or **selection** (via `_pack_into_budget`), and reasons must reflect the effect.
+- **Minimum viable contract (suggested)**:
+  - `max_tasks_per_day: int` (cap selected tasks even if time remains)
+  - `deprioritize_keywords: list[str]` (lower score if title/notes match)
+  - `prioritize_keywords: list[str]` (higher score if match)
+- **Non-goals for v1**: complex time-of-day scheduling, multi-day plans, per-task recurrence.
 
 ## Implementation checklist (for you)
 
@@ -74,6 +90,7 @@ Use this before calling a milestone “done”:
 - [ ] `build_plan` runs on real `CareTask` / `DailyConstraint` instances from UI or test fixtures
 - [ ] At least one test: higher-priority (or higher score) tasks preferred when time is limited
 - [ ] At least one test: tasks that do not fit appear in `skipped_tasks` (or equivalent behavior)
+- [ ] At least one test: a preference key changes ordering/selection (only once you claim “preferences supported”)
 - [ ] Plan output is shown in Streamlit with human-readable reasons
 - [ ] `CLASS_DIAGRAM.md` updated if public API or relationships changed
 - [ ] This doc: alignment table + revision log updated
@@ -86,6 +103,7 @@ Newest first.
 
 | Date | Change | What we re-checked |
 |------|--------|-------------------|
+| 2026-03-30 | Updated critique with concrete gaps from `pawpal_system.py` (Owner↔Pet mismatch, ordering divergence risk, stable IDs, packing explanation, validation, traceability); added a minimal “preference contract” section | Alignment table, gaps list, checklist |
 | 2026-03-30 | Initial critique doc created from README + `CLASS_DIAGRAM.md`; starter `app.py` has no scheduler yet | Full alignment table, gaps list |
 
 ---

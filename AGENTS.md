@@ -73,7 +73,10 @@ No `tests/` or `test_*.py` files yet; PRD expects tests for core scheduling beha
 ## Pitfalls called out in design review
 
 - **Owner.preferences** needs a concrete contract (keys / how `Scheduler` uses them) before it affects sorting.
+- **UML vs code relationships**: `CLASS_DIAGRAM.md` shows `Owner cares_for Pets`, but `pawpal_system.py` currently does not store pets on `Owner`. Decide whether the relationship is stored in-domain or managed by UI/session state; update UML/docs accordingly.
+- **Ordering source of truth**: avoid implementing two different ordering rules via both `CareTask.__lt__` and `Scheduler._sort_candidates` that can drift over time.
 - **Edit tasks** implies stable **`CareTask.id`** and UI state that maps back to domain objects.
+- **Packing behavior expectations**: a simple greedy packer is fine, but it must produce consistent, explainable reasons for included vs skipped tasks.
 - Prefer **importable, deterministic** scheduler code so tests do not need Streamlit.
 
 Details: [DESIGN_CRITIQUE.md](DESIGN_CRITIQUE.md) (gaps, checklist, prompts).
