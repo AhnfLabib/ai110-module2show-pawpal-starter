@@ -2,7 +2,7 @@
 
 Use this file as the **first stop** when onboarding to this repository. It summarizes purpose, architecture intent, file map, and **where implementation stands** relative to the assignment. Prefer linking to detailed docs rather than duplicating them.
 
-**Last aligned with repo:** 2026-03-30 (starter state: UI shell, no domain/scheduler wired).
+**Last aligned with repo:** 2026-03-30 (domain + scheduler implemented; UI not wired yet).
 
 ---
 
@@ -41,8 +41,10 @@ Agents implementing logic should match this API unless the student intentionally
 | [requirements.txt](requirements.txt) | `streamlit`, `pytest` |
 | [app.py](app.py) | Streamlit UI: demo inputs, task list in session state, **schedule button not wired** |
 | [pawpal_system.py](pawpal_system.py) | **Placeholder** for backend (`Owner`, `Pet`, `CareTask`, `Scheduler`, etc.) |
+| [main.py](main.py) | **Temporary test ground**: CLI script that instantiates domain objects and prints today’s schedule |
+| [tests/test_pawpal_system.py](tests/test_pawpal_system.py) | Pytest coverage for domain + scheduler; includes task add/complete behaviors |
 
-No `tests/` or `test_*.py` files yet; PRD expects tests for core scheduling behavior.
+PRD expects tests for core scheduling behavior; this repo now includes `tests/test_pawpal_system.py`.
 
 ---
 
@@ -51,9 +53,10 @@ No `tests/` or `test_*.py` files yet; PRD expects tests for core scheduling beha
 | Area | Status |
 |------|--------|
 | UML / design | Documented in `CLASS_DIAGRAM.md` |
-| Domain + scheduler code | Not implemented (`pawpal_system.py` is a stub) |
+| Domain + scheduler code | Implemented in `pawpal_system.py` (tasks, pets, multi-pet brain, greedy scheduler) |
 | Streamlit ↔ logic | Not connected; “Generate schedule” shows a placeholder warning |
-| Tests | None added |
+| Tests | Added pytest coverage for core domain + scheduling (`tests/test_pawpal_system.py`) |
+| CLI test script | Added `main.py` that imports domain classes, creates an owner with 2+ pets + 3+ tasks, and prints today’s schedule |
 | Living alignment doc | `DESIGN_CRITIQUE.md` tracks gaps and checklist |
 
 **When you change code meaningfully:** refresh the alignment table and revision log in [DESIGN_CRITIQUE.md](DESIGN_CRITIQUE.md) (see “When to update” there).
@@ -63,10 +66,10 @@ No `tests/` or `test_*.py` files yet; PRD expects tests for core scheduling beha
 ## Suggested workflow for agents (matches README)
 
 1. Treat [README.md](README.md) as the PRD; treat [CLASS_DIAGRAM.md](CLASS_DIAGRAM.md) as the target API unless revised.
-2. Implement domain classes and **Scheduler** in `pawpal_system.py` (or a `pawpal/` package if the repo grows) — keep scheduling **pure** (no Streamlit imports) for testability.
-3. Add **pytest** tests: priority under limited time, overflow → `skipped_tasks`, and any preference behavior you add.
-4. Wire [app.py](app.py): build real objects from UI state, call `build_plan`, display `DailyPlan` (e.g. `summary()`, `iter_with_reasons()`).
-5. Update UML and `DESIGN_CRITIQUE.md` when the public model or behavior diverges from the diagram.
+2. Domain and scheduling live in `pawpal_system.py` — keep it **pure** (no Streamlit imports) for testability.
+3. Add/extend **pytest** tests when behavior changes (`pytest -q`).
+4. Wire [app.py](app.py): build real objects from UI state, call `Scheduler.build_plan`, display `DailyPlan` (e.g. `summary()`, `iter_with_reasons()`).
+5. Update UML and `DESIGN_CRITIQUE.md` when the public model or behavior diverges from the diagram (e.g., multi-pet storage via `Owner.pets` and `PawPalBrain`).
 
 ---
 
@@ -99,5 +102,8 @@ streamlit run app.py
 | Date | Note |
 |------|------|
 | 2026-03-30 | Initial `AGENTS.md`: overview, file map, progress snapshot, pointers to README / UML / critique |
+| 2026-03-30 | Implemented `pawpal_system.py` core domain + `Scheduler`; added `tests/` + `pytest.ini` |
+| 2026-03-30 | Added `main.py` temporary CLI script to print a schedule using the domain + scheduler |
+| 2026-03-30 | Refined `tests/test_pawpal_system.py` to verify task addition + completion (incl. duplicate IDs and completion-day filtering) |
 
 If you rename entrypoints or add a `tests/` layout, add one line here so the next agent knows.
