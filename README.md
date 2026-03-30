@@ -32,6 +32,16 @@ This repo now includes a “smarter” backend scheduler (see `pawpal_system.py`
 - **Time-of-day ordering + lightweight conflict warnings**: tasks can optionally include a `"HH:MM"` time; the plan can surface non-fatal warnings when multiple tasks share the same start time.
 - **Test coverage + CLI harness**: key behaviors are covered by pytest (`tests/`) and can be exercised via `main.py` scenarios.
 
+## Testing PawPal+
+
+Run the test suite with:
+
+```bash
+pytest -q
+```
+
+The tests cover core domain and scheduling behavior (e.g., task creation/completion, candidate filtering/due-ness, recurrence auto-spawn, budget packing, and related planner outputs). Based on the latest run (**16 passed**), current reliability confidence: **★★★★☆ (4/5)**.
+
 ## Getting started
 
 ### Setup

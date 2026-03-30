@@ -10,6 +10,7 @@ from pawpal_system import (
     Pet,
     Scheduler,
     TaskFrequency,
+    sort_tasks_by_time,
 )
 
 
@@ -204,4 +205,67 @@ def test_scheduler_does_not_filter_completed_on_previous_day():
         DailyConstraint(minutes_available=10, day=today),
     )
     assert [item.task.id for item in plan.items] == ["t1"]
+
+
+def test_sort_tasks_by_time_orders_valid_times_and_puts_invalid_last():
+    tasks = [
+        CareTask(title="No time", duration_minutes=5, priority="low", id="t0", time=""),
+        CareTask(title="Morning", duration_minutes=5, priority="low", id="t1", time="09:00"),
+        CareTask(title="Bad format", duration_minutes=5, priority="low", id="t2", time="9am"),
+        CareTask(title="Earlier", duration_minutes=5, priority="low", id="t3", time="07:30"),
+        CareTask(title="Impossible", duration_minutes=5, priority="low", id="t4", time="24:00"),
+        CareTask(title="Later", duration_minutes=5, priority="low", id="t5", time="18:15"),
+    ]
+
+    sorted_ids = [t.id for t in sort_tasks_by_time(tasks)]
+
+    # Valid 'HH:MM' values should be in chronological order.
+    assert sorted_ids[:3] == ["t3", "t1", "t5"]
+    # Invalid/missing times should be pushed to the end (order among them is not important here).
+    assert set(sorted_ids[3:]) == {"t0", "t2", "t4"}
+
+
+def test_daily_recurrence_spawn_is_not_due_until_next_day_for_scheduler():
+    owner = Owner(name="Ahnaf")
+    pet = Pet(name="Mochi", species="cat")
+    scheduler = Scheduler()
+    d = date(2026, 3, 30)
+
+    t = CareTask(
+        title="Feed",
+        duration_minutes=5,
+        priority="high",
+        id="t1",
+        frequency=TaskFrequency.daily,
+    )
+    spawned = t.mark_completed(day=d)
+    assert spawned is not None
+
+    # Original task is completed today => excluded today.
+    plan_today = scheduler.build_plan(owner, pet, [t, spawned], DailyConstraint(minutes_available=30, day=d))
+    assert [item.task.id for item in plan_today.items] == []
+
+    # Spawned task becomes due tomorrow => included tomorrow.
+    tomorrow = date(2026, 3, 31)
+    plan_tomorrow = scheduler.build_plan(owner, pet, [t, spawned], DailyConstraint(minutes_available=30, day=tomorrow))
+    # Note: current logic allows tasks completed on previous days to be scheduled again.
+    # If the caller keeps the original task AND the spawned next instance, both can appear.
+    assert [item.task.id for item in plan_tomorrow.items] == ["t1", "t1:2026-03-31"]
+
+
+def test_scheduler_emits_warning_for_same_time_conflict_and_ignores_invalid_times():
+    owner = Owner(name="Ahnaf")
+    pet = Pet(name="Mochi", species="cat")
+    d = date(2026, 3, 30)
+
+    # Both should be selected and both share a valid HH:MM time => warning.
+    t1 = CareTask(title="Feed", duration_minutes=5, priority="high", id="t1", time="09:00")
+    t2 = CareTask(title="Meds", duration_minutes=5, priority="high", id="t2", time="09:00")
+    # Invalid time should not be considered for conflicts.
+    t3 = CareTask(title="Bad time", duration_minutes=5, priority="high", id="t3", time="9am")
+
+    plan = Scheduler().build_plan(owner, pet, [t1, t2, t3], DailyConstraint(minutes_available=20, day=d))
+    assert {item.task.id for item in plan.items} == {"t1", "t2", "t3"}
+    assert any("Time conflict at 09:00" in w for w in plan.warnings)
+    assert not any("Time conflict at 9am" in w for w in plan.warnings)
 

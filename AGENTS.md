@@ -2,7 +2,7 @@
 
 Use this file as the **first stop** when onboarding to this repository. It summarizes purpose, architecture intent, file map, and **where implementation stands** relative to the assignment. Prefer linking to detailed docs rather than duplicating them.
 
-**Last aligned with repo:** 2026-03-30 (domain + scheduler implemented; Streamlit UI wired to scheduler; time sorting + task filtering added; recurring task auto-spawn added; lightweight conflict warnings added; candidate filtering centralized via `CareTask.is_due_on`).
+**Last aligned with repo:** 2026-03-30 (domain + scheduler implemented; Streamlit UI wired to scheduler; time sorting + task filtering added; recurring task auto-spawn added; lightweight conflict warnings added; candidate filtering centralized via `CareTask.is_due_on`; README updated with “Smarter Scheduling” + “Testing PawPal+”).
 
 ---
 
@@ -43,7 +43,7 @@ Agents implementing logic should match this API unless the student intentionally
 | [app.py](app.py) | Streamlit UI: **Add pet** → `Owner.add_pet`; **Add task** → `Pet.add_task`; **Generate schedule** builds a real `DailyPlan` via `Scheduler.build_plan` using tasks from the selected pet |
 | [pawpal_system.py](pawpal_system.py) | Backend domain + scheduler (`Owner`, `Pet`, `CareTask`, `DailyPlan`, `Scheduler`, etc.) — keep pure (no Streamlit) |
 | [main.py](main.py) | **Temporary test ground**: CLI trial harness that runs multiple scenarios (today/tomorrow, tight budgets, recurrence, time conflicts) and prints raw vs candidate vs scheduled outputs |
-| [tests/test_pawpal_system.py](tests/test_pawpal_system.py) | Pytest coverage for domain + scheduler; includes task add/complete behaviors |
+| [tests/test_pawpal_system.py](tests/test_pawpal_system.py) | Pytest coverage for domain + scheduler; includes task add/complete, time sorting, recurrence gating, and conflict-warning behaviors |
 
 PRD expects tests for core scheduling behavior; this repo now includes `tests/test_pawpal_system.py`.
 
@@ -58,7 +58,7 @@ PRD expects tests for core scheduling behavior; this repo now includes `tests/te
 | Recurring tasks | Implemented in `pawpal_system.py`: `CareTask.mark_completed()` spawns the next instance for `daily`/`weekly` tasks and sets `due_day`; `Scheduler._sort_candidates()` filters out tasks not due yet |
 | Conflict detection (lightweight) | Implemented as non-fatal warnings: if 2+ scheduled tasks share the same valid `CareTask.time` (`"HH:MM"`), scheduler adds a warning message (same pet vs different pets) to `DailyPlan.warnings` |
 | Streamlit ↔ logic | Connected: `app.py` persists domain objects in `st.session_state`; “Add pet” calls `Owner.add_pet`; “Add task” calls `Pet.add_task`; “Generate schedule” calls `Scheduler.build_plan` using tasks from the active pet; UI displays `DailyPlan.warnings` via `st.warning()` |
-| Tests | Added pytest coverage for core domain + scheduling (`tests/test_pawpal_system.py`) |
+| Tests | Added pytest coverage for core domain + scheduling (`tests/test_pawpal_system.py`) incl. time sorting, recurrence gating semantics, and conflict warnings |
 | CLI test script | `main.py` now runs multiple terminal “trials” to validate algorithm changes: due-day gating, recurrence auto-spawn, candidate filtering via `CareTask.is_due_on`, budget packing/skips, and same-time conflict warnings |
 | Living alignment doc | `DESIGN_CRITIQUE.md` tracks gaps and checklist |
 
@@ -140,5 +140,8 @@ streamlit run app.py
 | 2026-03-30 | Added lightweight conflict detection: `DailyPlan.warnings` + `CareTask.pet_name` provenance; scheduler warns on same-time tasks; UI displays warnings |
 | 2026-03-30 | Added pointer to algorithm simplification notes for `Scheduler._sort_candidates` in `DESIGN_CRITIQUE.md` |
 | 2026-03-30 | Centralized scheduler candidate filtering in `CareTask.is_due_on(day)`; simplified `Scheduler._sort_candidates` to a predicate + list comprehension |
+| 2026-03-30 | Expanded `tests/test_pawpal_system.py` with focused tests for time sorting, daily recurrence due gating through `Scheduler`, and same-time conflict warnings |
+| 2026-03-30 | Updated `README.md` with “Smarter Scheduling” and “Testing PawPal+” sections (incl. `pytest -q` command and confidence rating) |
+| 2026-03-30 | Updated `.gitignore` to ignore repo-local operational files (`AGENTS.md`, `pytest.ini`) |
 
 If you rename entrypoints or add a `tests/` layout, add one line here so the next agent knows.
