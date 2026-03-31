@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Iterator, Optional, Sequence
 
 
 def _hhmm_sort_key(value: str) -> tuple[int, int]:
@@ -23,7 +23,7 @@ def _hhmm_sort_key(value: str) -> tuple[int, int]:
         return (99, 99)
     try:
         parts = value.strip().split(":")
-        if len(parts) != 2:
+        if len(parts) != 2 or len(parts[0]) != 2 or len(parts[1]) != 2:
             return (99, 99)
         hour = int(parts[0])
         minute = int(parts[1])
@@ -34,11 +34,25 @@ def _hhmm_sort_key(value: str) -> tuple[int, int]:
         return (99, 99)
 
 
+def _normalized_valid_hhmm(raw: str) -> str | None:
+    """Return stripped 'HH:MM' if valid, else None (invalid/missing times are excluded)."""
+    if raw is None:
+        return None
+    s = raw.strip()
+    if _hhmm_sort_key(s) == (99, 99):
+        return None
+    return s
+
+
 @dataclass
 class Owner:
     name: str
     preferences: dict = field(default_factory=dict)
-    pets: List[Pet] = field(default_factory=list)
+    pets: list[Pet] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.name or not self.name.strip():
+            raise ValueError("Owner name cannot be empty.")
 
     def add_pet(self, pet: Pet) -> None:
         if any(p.name == pet.name for p in self.pets):
@@ -51,10 +65,10 @@ class Owner:
                 return pet
         raise KeyError(f"No pet named '{name}' for owner '{self.name}'.")
 
-    def all_tasks(self) -> List[CareTask]:
-        tasks: List[CareTask] = []
+    def all_tasks(self) -> list[CareTask]:
+        tasks: list[CareTask] = []
         for pet in self.pets:
-            tasks.extend(list(pet.tasks))
+            tasks.extend(pet.tasks)
         return tasks
 
     def __str__(self) -> str:
@@ -65,16 +79,17 @@ class Owner:
 class Pet:
     name: str
     species: str
-    details: Dict[str, Any] = field(default_factory=dict)
-    tasks: List[CareTask] = field(default_factory=list)
+    details: dict[str, Any] = field(default_factory=dict)
+    tasks: list[CareTask] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.name or not self.name.strip():
+            raise ValueError("Pet name cannot be empty.")
 
     def add_task(self, task: CareTask) -> None:
         if task.id and any(t.id == task.id for t in self.tasks):
             raise ValueError(f"Task with id '{task.id}' already exists for pet '{self.name}'.")
-        # Keep a lightweight association so scheduler warnings can mention pet context,
-        # especially when tasks are aggregated across multiple pets.
-        if not task.pet_name:
-            task.pet_name = self.name
+        task.pet_name = self.name
         self.tasks.append(task)
 
     def get_task(self, task_id: str) -> CareTask:
@@ -83,10 +98,35 @@ class Pet:
                 return task
         raise KeyError(f"No task with id '{task_id}' for pet '{self.name}'.")
 
-    def list_tasks(self, *, include_completed: bool = True) -> List[CareTask]:
+    def list_tasks(self, *, include_completed: bool = True) -> list[CareTask]:
         if include_completed:
             return list(self.tasks)
         return [t for t in self.tasks if not t.completed]
+
+    def remove_spawned_instance(self, original_task: CareTask, next_due: date) -> bool:
+        """Remove the auto-spawned recurring instance that would have been created by mark_completed."""
+        base_id = (original_task.id or "").strip()
+        expected_id = f"{base_id}:{next_due.isoformat()}" if base_id else ""
+        if expected_id:
+            return self.remove_task(expected_id)
+        for idx, candidate in enumerate(self.tasks):
+            if (
+                candidate.title == original_task.title
+                and candidate.frequency == original_task.frequency
+                and candidate.due_day == next_due
+                and not candidate.completed
+                and candidate.last_completed_day is None
+            ):
+                self.tasks.pop(idx)
+                return True
+        return False
+
+    def remove_task(self, task_id: str) -> bool:
+        for idx, task in enumerate(self.tasks):
+            if task.id == task_id:
+                self.tasks.pop(idx)
+                return True
+        return False
 
     def __str__(self) -> str:
         return f"{self.name} ({self.species})"
@@ -126,6 +166,15 @@ class CareTask:
     due_day: Optional[date] = None
     completed: bool = False
     last_completed_day: Optional[date] = None
+
+    def __post_init__(self) -> None:
+        if not self.title or not self.title.strip():
+            raise ValueError("Task title cannot be empty.")
+        valid_priorities = {"low", "medium", "high"}
+        if self.priority.lower() not in valid_priorities:
+            raise ValueError(
+                f"Unknown priority '{self.priority}'. Must be one of: {', '.join(sorted(valid_priorities))}."
+            )
 
     def is_due_on(self, day: date) -> bool:
         """
@@ -196,12 +245,23 @@ class DailyConstraint:
     minutes_available: int
     day: date
 
+    def __post_init__(self) -> None:
+        if self.minutes_available < 0:
+            raise ValueError("minutes_available must be non-negative.")
+
     def __str__(self) -> str:
         return f"{self.day.isoformat()}: {self.minutes_available} min available"
 
 
 @dataclass
 class PlanItem:
+    """
+    One entry in a daily schedule.
+
+    order_index: execution order in the plan (0-based), matching greedy pack sequence.
+    start_minute_optional: reserved for future time-of-day scheduling; unused by current packer.
+    """
+
     task: CareTask
     reason: str
     order_index: int
@@ -210,11 +270,13 @@ class PlanItem:
 
 @dataclass
 class DailyPlan:
-    items: List[PlanItem] = field(default_factory=list)
+    """Result of scheduling: ordered plan items, totals, skipped tasks, and non-fatal warnings."""
+    items: list[PlanItem] = field(default_factory=list)
     total_minutes_used: int = 0
     leftover_minutes: int = 0
-    skipped_tasks: List[CareTask] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    skipped_tasks: list[CareTask] = field(default_factory=list)
+    skip_reasons: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         lines = [
@@ -243,7 +305,7 @@ class Scheduler:
         pet: Pet,
         tasks: Sequence[CareTask],
         constraint: DailyConstraint,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Non-mutating helper for UIs:
         - shows which tasks are considered "due" for the day,
@@ -253,7 +315,7 @@ class Scheduler:
         Returns a dict to keep the UI lightweight and avoid introducing new public dataclasses.
         """
 
-        candidates = self._sort_candidates(list(tasks), owner=owner, pet=pet, constraint=constraint)
+        candidates = self._sort_candidates(list(tasks), constraint=constraint)
         filtered_out = [t for t in tasks if t not in candidates]
 
         selected, skipped, used = self._pack_into_budget(candidates, constraint.minutes_available)
@@ -277,10 +339,10 @@ class Scheduler:
         tasks: Sequence[CareTask],
         constraint: DailyConstraint,
     ) -> DailyPlan:
-        candidates = self._sort_candidates(list(tasks), owner=owner, pet=pet, constraint=constraint)
+        candidates = self._sort_candidates(list(tasks), constraint=constraint)
         selected, skipped, used = self._pack_into_budget(candidates, constraint.minutes_available)
 
-        items: List[PlanItem] = []
+        items: list[PlanItem] = []
         for idx, task in enumerate(selected):
             items.append(
                 PlanItem(
@@ -298,29 +360,39 @@ class Scheduler:
                 )
             )
 
+        skip_reasons = [
+            self._explain_choice(
+                task,
+                {"selected": False, "owner": owner, "pet": pet, "constraint": constraint},
+            )
+            for task in skipped
+        ]
+
         plan = DailyPlan(
             items=items,
             total_minutes_used=used,
             leftover_minutes=max(constraint.minutes_available - used, 0),
             skipped_tasks=list(skipped),
+            skip_reasons=skip_reasons,
             warnings=self._detect_time_conflicts(items, default_pet_name=pet.name),
         )
         return plan
 
-    def _detect_time_conflicts(self, items: Sequence[PlanItem], *, default_pet_name: str) -> List[str]:
+    def _detect_time_conflicts(self, items: Sequence[PlanItem], *, default_pet_name: str) -> list[str]:
         """
         Lightweight conflict detection:
         - If 2+ scheduled tasks share the same valid 'HH:MM' start time, emit a warning.
         - Never raises; only returns warning strings for display/logging.
         """
-        by_time: Dict[str, List[CareTask]] = {}
+        by_time: dict[str, list[CareTask]] = {}
         for item in items:
             t = item.task
-            if _hhmm_sort_key(t.time) == (99, 99):
+            key = _normalized_valid_hhmm(t.time)
+            if key is None:
                 continue
-            by_time.setdefault(t.time.strip(), []).append(t)
+            by_time.setdefault(key, []).append(t)
 
-        warnings: List[str] = []
+        warnings: list[str] = []
         for hhmm, tasks_at_time in sorted(by_time.items(), key=lambda kv: _hhmm_sort_key(kv[0])):
             if len(tasks_at_time) < 2:
                 continue
@@ -337,28 +409,25 @@ class Scheduler:
 
     def _sort_candidates(
         self,
-        tasks: List[CareTask],
+        tasks: list[CareTask],
         *,
-        owner: Owner,
-        pet: Pet,
         constraint: DailyConstraint,
-    ) -> List[CareTask]:
+    ) -> list[CareTask]:
         """Order tasks before packing (e.g. by priority, preferences)."""
-        _ = (owner, pet)  # reserved for preference-aware sorting
         candidates = [t for t in tasks if t.is_due_on(constraint.day)]
 
         # Sort key is ascending; use negative priority_score to put higher priorities first.
-        def sort_key(t: CareTask) -> Tuple[int, int, str]:
+        def sort_key(t: CareTask) -> tuple[int, int, str]:
             return (-t.priority_score(), t.duration_minutes, t.title.lower())
 
         return sorted(candidates, key=sort_key)
 
     def _pack_into_budget(
         self, tasks: Sequence[CareTask], minutes: int
-    ) -> tuple[List[CareTask], List[CareTask], int]:
+    ) -> tuple[list[CareTask], list[CareTask], int]:
         """Return (selected_in_order, skipped, total_minutes_used)."""
-        selected: List[CareTask] = []
-        skipped: List[CareTask] = []
+        selected: list[CareTask] = []
+        skipped: list[CareTask] = []
         used = 0
 
         for task in tasks:
@@ -373,9 +442,9 @@ class Scheduler:
 
         return selected, skipped, used
 
-    def _explain_choice(self, task: CareTask, context: Any) -> str:
+    def _explain_choice(self, task: CareTask, context: dict[str, Any]) -> str:
         """Explain why a task was included or skipped."""
-        selected = bool(getattr(context, "get", lambda _k, _d=None: None)("selected", True))  # type: ignore[misc]
+        selected = bool(context.get("selected", True))
         if selected:
             return (
                 f"Included '{task.title}' because it is {task.priority.lower()} priority "
@@ -406,19 +475,19 @@ class PawPalBrain:
     def add_task_to_pet(self, pet_name: str, task: CareTask) -> None:
         self.owner.get_pet(pet_name).add_task(task)
 
-    def pets(self) -> List[Pet]:
+    def pets(self) -> list[Pet]:
         return list(self.owner.pets)
 
-    def tasks_for_pet(self, pet_name: str, *, include_completed: bool = True) -> List[CareTask]:
+    def tasks_for_pet(self, pet_name: str, *, include_completed: bool = True) -> list[CareTask]:
         return self.owner.get_pet(pet_name).list_tasks(include_completed=include_completed)
 
-    def all_tasks(self, *, include_completed: bool = True) -> List[CareTask]:
-        tasks: List[CareTask] = []
+    def all_tasks(self, *, include_completed: bool = True) -> list[CareTask]:
+        tasks: list[CareTask] = []
         for pet in self.owner.pets:
             tasks.extend(pet.list_tasks(include_completed=include_completed))
         return tasks
 
-    def tasks_grouped_by_pet(self, *, include_completed: bool = True) -> Dict[str, List[CareTask]]:
+    def tasks_grouped_by_pet(self, *, include_completed: bool = True) -> dict[str, list[CareTask]]:
         return {pet.name: pet.list_tasks(include_completed=include_completed) for pet in self.owner.pets}
 
     def filter_tasks(
@@ -427,7 +496,7 @@ class PawPalBrain:
         completed: Optional[bool] = None,
         pet_name: Optional[str] = None,
         sort_by_time: bool = False,
-    ) -> List[CareTask]:
+    ) -> list[CareTask]:
         """
         Filter tasks by completion status and/or pet name.
 
@@ -435,13 +504,13 @@ class PawPalBrain:
         - pet_name=None returns tasks across all pets
         - sort_by_time=True sorts by CareTask.time ('HH:MM') using a lambda key
         """
+        include_completed = completed is not False
         if pet_name is None:
-            tasks = self.all_tasks(include_completed=True)
+            tasks = self.all_tasks(include_completed=include_completed)
         else:
-            tasks = self.tasks_for_pet(pet_name, include_completed=True)
-
-        if completed is not None:
-            tasks = [t for t in tasks if t.completed == completed]
+            tasks = self.tasks_for_pet(pet_name, include_completed=include_completed)
+        if completed is True:
+            tasks = [t for t in tasks if t.completed]
 
         if sort_by_time:
             tasks = sorted(tasks, key=lambda t: _hhmm_sort_key(t.time))
@@ -449,7 +518,7 @@ class PawPalBrain:
         return tasks
 
 
-def sort_tasks_by_time(tasks: Sequence[CareTask]) -> List[CareTask]:
+def sort_tasks_by_time(tasks: Sequence[CareTask]) -> list[CareTask]:
     """
     Convenience helper: sort tasks by their `time` field ('HH:MM').
 

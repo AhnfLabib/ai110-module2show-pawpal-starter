@@ -52,8 +52,6 @@ def run_trial(*, title: str, brain: PawPalBrain, scheduler: Scheduler, owner: Ow
 
         sorted_candidates = scheduler._sort_candidates(  # noqa: SLF001 (ok for a test ground script)
             list(raw_tasks),
-            owner=owner,
-            pet=pet,
             constraint=constraint,
         )
         print_task_list(label=f"{pet.name} scheduler-sorted candidates (after due/completed filters)", tasks=sorted_candidates)

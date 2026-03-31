@@ -22,9 +22,7 @@ def _fmt_due(due: date | None) -> str:
 
 
 def _task_frequency_label(task: CareTask) -> str:
-    f = getattr(task, "frequency", None)
-    if f is None:
-        return "—"
+    f = task.frequency
     return f.value if hasattr(f, "value") else str(f)
 
 
@@ -57,6 +55,9 @@ Details, setup, and tests: **README.md**.
 
 
 def get_or_init_owner(*, owner_name: str) -> Owner:
+    owner_name = owner_name.strip()
+    if not owner_name:
+        raise ValueError("Owner name cannot be empty.")
     existing = st.session_state.get("owner")
     if isinstance(existing, Owner):
         existing.name = owner_name
@@ -78,7 +79,16 @@ def get_or_init_pet(*, owner: Owner, pet_name: str, species: str) -> Pet:
 
 st.subheader("Owner & pets")
 owner_name = st.text_input("Owner name", value="Jordan", help="Updates the `Owner` used for scheduling and session state.")
-owner = get_or_init_owner(owner_name=owner_name)
+owner_name_clean = owner_name.strip()
+if not owner_name_clean:
+    st.error("Owner name cannot be empty.")
+    existing_owner = st.session_state.get("owner")
+    if isinstance(existing_owner, Owner):
+        owner = existing_owner
+    else:
+        st.stop()
+else:
+    owner = get_or_init_owner(owner_name=owner_name_clean)
 
 with st.form("add_pet_form", clear_on_submit=False):
     c1, c2 = st.columns(2)
@@ -113,7 +123,11 @@ else:
 
 active_pet: Pet | None = None
 if selected_pet_name:
-    active_pet = owner.get_pet(selected_pet_name)
+    try:
+        active_pet = owner.get_pet(selected_pet_name)
+    except KeyError:
+        st.error(f"Pet '{selected_pet_name}' no longer exists.")
+        active_pet = None
 
 st.divider()
 st.subheader("Care tasks")
@@ -129,40 +143,44 @@ else:
     with col2:
         duration = st.number_input("Duration (minutes)", min_value=1, max_value=240, value=20)
     with col3:
-        priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
+        task_time = st.text_input("Start time (optional, HH:MM)", value="").strip()
 
     col4, col5 = st.columns(2)
     with col4:
-        task_time = st.text_input("Start time (optional, HH:MM)", value="").strip()
-    with col5:
         frequency = st.selectbox("Frequency", ["once", "daily", "weekly", "as_needed"], index=0)
+    with col5:
+        priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
 
     task_notes = st.text_input("Notes (optional)", value="")
 
     if st.button("Add task", type="primary"):
-        try:
-            active_pet.add_task(
-                CareTask(
-                    id=str(uuid4()),
-                    title=str(task_title).strip() or "Untitled task",
-                    duration_minutes=int(duration),
-                    priority=str(priority),
-                    time=str(task_time),
-                    notes=str(task_notes),
-                    frequency=TaskFrequency(str(frequency)),
+        task_title_stripped = str(task_title).strip()
+        if not task_title_stripped:
+            st.error("Task title cannot be empty.")
+        else:
+            try:
+                active_pet.add_task(
+                    CareTask(
+                        id=str(uuid4()),
+                        title=task_title_stripped,
+                        duration_minutes=int(duration),
+                        priority=str(priority),
+                        time=str(task_time),
+                        notes=str(task_notes),
+                        frequency=TaskFrequency(str(frequency)),
+                    )
                 )
-            )
-            st.success(f"Added task to {active_pet.name}.")
-        except ValueError as e:
-            st.error(str(e))
+                st.success(f"Added task to {active_pet.name}.")
+            except ValueError as e:
+                st.error(str(e))
 
     if active_pet.tasks:
         st.caption("Check **Done today** to record completion (daily/weekly tasks spawn the next due instance automatically).")
 
         today = date.today()
-        for t in active_pet.list_tasks(include_completed=True):
+        for idx, t in enumerate(active_pet.list_tasks(include_completed=True)):
             with st.container(border=True):
-                completed_today_key = f"completed_today::{active_pet.name}::{t.id}"
+                completed_today_key = f"completed_today::{active_pet.name}::{idx}"
                 default_completed_today = bool(t.completed and t.last_completed_day == today)
 
                 head_l, head_r = st.columns([0.22, 0.78])
@@ -173,31 +191,31 @@ else:
                         value=default_completed_today,
                     )
                 with head_r:
-                    due = getattr(t, "due_day", None)
-                    time_disp = _fmt_dash(getattr(t, "time", ""))
+                    due = t.due_day
+                    time_disp = _fmt_dash(t.time)
                     freq_disp = _task_frequency_label(t)
-                    st.markdown(f"#### {t.title}")
+                    st.write(f"**{t.title}**")
                     st.markdown(
                         f"{_priority_badge_md(t.priority)} &nbsp;·&nbsp; **{t.duration_minutes} min** &nbsp;·&nbsp; "
                         f"Time **{time_disp}** &nbsp;·&nbsp; **{freq_disp}** &nbsp;·&nbsp; Due **{_fmt_due(due)}**"
                     )
 
-                notes_text = (getattr(t, "notes", "") or "").strip()
+                notes_text = (t.notes or "").strip()
                 if notes_text:
                     with st.expander("Notes"):
-                        st.markdown(notes_text)
+                        st.write(notes_text)
 
             if completed_today and not default_completed_today:
                 next_task = t.mark_completed(day=today)
                 if next_task is not None:
                     try:
                         active_pet.add_task(next_task)
-                    except ValueError:
-                        pass
+                    except ValueError as e:
+                        st.warning(f"Could not schedule next instance: {e}")
                 st.toast(f"Marked completed: {t.title}")
 
             if (not completed_today) and default_completed_today:
-                freq = getattr(t, "frequency", None)
+                freq = t.frequency
                 next_due = None
                 if freq == TaskFrequency.daily:
                     next_due = today + timedelta(days=1)
@@ -205,26 +223,7 @@ else:
                     next_due = today + timedelta(days=7)
 
                 if next_due is not None:
-                    base_id = (t.id or "").strip()
-                    expected_next_id = f"{base_id}:{next_due.isoformat()}" if base_id else ""
-                    to_remove_idx: int | None = None
-                    for idx, candidate in enumerate(active_pet.tasks):
-                        if expected_next_id and candidate.id == expected_next_id:
-                            if getattr(candidate, "due_day", None) == next_due and not candidate.completed:
-                                to_remove_idx = idx
-                                break
-                        elif (
-                            not expected_next_id
-                            and candidate.title == t.title
-                            and getattr(candidate, "frequency", None) == freq
-                            and getattr(candidate, "due_day", None) == next_due
-                            and not candidate.completed
-                            and candidate.last_completed_day is None
-                        ):
-                            to_remove_idx = idx
-                            break
-                    if to_remove_idx is not None:
-                        active_pet.tasks.pop(to_remove_idx)
+                    active_pet.remove_spawned_instance(t, next_due)
 
                 t.mark_incomplete()
                 t.last_completed_day = None
@@ -264,8 +263,7 @@ if st.button("Generate schedule"):
         constraint = DailyConstraint(minutes_available=int(minutes_available), day=date.today())
         scheduler = Scheduler()
 
-        scope = st.session_state.get("schedule_scope", SCOPE_ACTIVE_PET)
-        if scope == SCOPE_ALL_PETS:
+        if schedule_scope == SCOPE_ALL_PETS:
             all_tasks = owner.all_tasks()
         else:
             all_tasks = pet.list_tasks(include_completed=True)
@@ -287,8 +285,8 @@ if st.button("Generate schedule"):
                             "title": t.title,
                             "priority": t.priority,
                             "duration_minutes": t.duration_minutes,
-                            "time": getattr(t, "time", ""),
-                            "due_day": getattr(t, "due_day", None),
+                            "time": t.time,
+                            "due_day": t.due_day,
                             "completed": t.completed,
                         }
                         for t in filtered_out
@@ -305,8 +303,8 @@ if st.button("Generate schedule"):
                         "title": t.title,
                         "priority": t.priority,
                         "duration_minutes": t.duration_minutes,
-                        "time": getattr(t, "time", ""),
-                        "due_day": getattr(t, "due_day", None),
+                        "time": t.time,
+                        "due_day": t.due_day,
                         "completed": t.completed,
                     }
                     for idx, t in enumerate(candidates)
@@ -323,8 +321,8 @@ if st.button("Generate schedule"):
                             "title": t.title,
                             "priority": t.priority,
                             "duration_minutes": t.duration_minutes,
-                            "time": getattr(t, "time", ""),
-                            "due_day": getattr(t, "due_day", None),
+                            "time": t.time,
+                            "due_day": t.due_day,
                             "completed": t.completed,
                         }
                         for t in filtered_out
@@ -345,7 +343,7 @@ if st.button("Generate schedule"):
                             "title": t.title,
                             "priority": t.priority,
                             "duration_minutes": t.duration_minutes,
-                            "time": getattr(t, "time", ""),
+                            "time": t.time,
                         }
                         for t in skipped_for_budget
                     ]
@@ -357,7 +355,7 @@ if st.button("Generate schedule"):
             st.subheader("Plan result")
 
             st.success(plan.summary())
-            if getattr(plan, "warnings", None):
+            if plan.warnings:
                 st.markdown("### Warnings")
                 for w in plan.warnings:
                     st.warning(w)
@@ -370,7 +368,7 @@ if st.button("Generate schedule"):
                         "title": task.title,
                         "duration_minutes": task.duration_minutes,
                         "priority": task.priority,
-                        "time": getattr(task, "time", ""),
+                        "time": task.time,
                         "reason": reason,
                     }
                     for idx, (task, reason) in enumerate(plan.iter_with_reasons())
@@ -385,7 +383,7 @@ if st.button("Generate schedule"):
                             "title": t.title,
                             "duration_minutes": t.duration_minutes,
                             "priority": t.priority,
-                            "time": getattr(t, "time", ""),
+                            "time": t.time,
                         }
                         for t in plan.skipped_tasks
                     ]

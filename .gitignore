@@ -10,3 +10,9 @@ __pycache__/
 
 # Claude / local AI tooling (file or directory)
 .claude
+
+# Claude project notes / AI code reviews (repo-local)
+CLAUDE.md
+claude.md
+code_review_by_claude
+code_review_by_claude.md

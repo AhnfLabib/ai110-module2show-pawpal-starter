@@ -2,7 +2,7 @@
 
 Use this file as the **first stop** when onboarding to this repository. It summarizes purpose, architecture intent, file map, and **where implementation stands** relative to the assignment. Prefer linking to detailed docs rather than duplicating them.
 
-**Last aligned with repo:** 2026-03-30 (domain + scheduler implemented; Streamlit UI wired to scheduler; time sorting + task filtering added; recurring task auto-spawn added; lightweight conflict warnings added; candidate filtering centralized via `CareTask.is_due_on`; README updated with “Smarter Scheduling” + “Testing PawPal+”).
+**Last aligned with repo:** 2026-03-30 (domain + scheduler: `CareTask.is_due_on`, recurrence, conflict warnings; Streamlit **UI consolidated** — Owner & pets in one flow, **bordered task cards** + humanized labels, **Done today** → `mark_completed` / `mark_incomplete` with **recurring spawn + undo**; **schedule scope** Active pet vs **All pets**; `Scheduler.preview` + `build_plan`; README “Smarter Scheduling” / “Testing PawPal+”; optional `CLAUDE.md` / `code_review_by_claude.md`.)
 
 ---
 
@@ -40,7 +40,9 @@ Agents implementing logic should match this API unless the student intentionally
 | [DESIGN_CRITIQUE.md](DESIGN_CRITIQUE.md) | PRD ↔ UML ↔ code alignment table, gaps, checklist, revision log |
 | [reflection.md](reflection.md) | Student reflection template (prompts only; fill as you go) |
 | [requirements.txt](requirements.txt) | `streamlit`, `pytest` |
-| [app.py](app.py) | Streamlit UI: **Add pet** → `Owner.add_pet`; **Add task** → `Pet.add_task`; **Generate schedule** builds a real `DailyPlan` via `Scheduler.build_plan` using tasks from the selected pet |
+| [app.py](app.py) | Streamlit UI: **Owner** name + **add pet** form → `Owner.add_pet` / `Pet`; **care tasks** (title, duration, priority, optional `HH:MM`, `TaskFrequency`, notes) → `Pet.add_task`; **Done today** checkboxes → `CareTask.mark_completed` / `mark_incomplete` (recurring undo removes auto-spawned next instance when toggled off); **Daily plan**: minutes + scope (**active pet** vs **all pets** → `owner.all_tasks()`), `Scheduler.preview` then `Scheduler.build_plan`, tables + `DailyPlan.warnings` |
+| [CLAUDE.md](CLAUDE.md) | Claude Code onboarding: commands, architecture layers, conventions (if present) |
+| [code_review_by_claude.md](code_review_by_claude.md) | Narrative code review notes (if present); not part of the assignment rubric |
 | [pawpal_system.py](pawpal_system.py) | Backend domain + scheduler (`Owner`, `Pet`, `CareTask`, `DailyPlan`, `Scheduler`, etc.) — keep pure (no Streamlit) |
 | [main.py](main.py) | **Temporary test ground**: CLI trial harness that runs multiple scenarios (today/tomorrow, tight budgets, recurrence, time conflicts) and prints raw vs candidate vs scheduled outputs |
 | [tests/test_pawpal_system.py](tests/test_pawpal_system.py) | Pytest coverage for domain + scheduler; includes task add/complete, time sorting, recurrence gating, and conflict-warning behaviors |
@@ -57,7 +59,7 @@ PRD expects tests for core scheduling behavior; this repo now includes `tests/te
 | Domain + scheduler code | Implemented in `pawpal_system.py` (tasks, pets, multi-pet brain, greedy scheduler; `CareTask.time` + time sorting helpers; centralized “candidate due-ness” via `CareTask.is_due_on(day)`) |
 | Recurring tasks | Implemented in `pawpal_system.py`: `CareTask.mark_completed()` spawns the next instance for `daily`/`weekly` tasks and sets `due_day`; `Scheduler._sort_candidates()` filters out tasks not due yet |
 | Conflict detection (lightweight) | Implemented as non-fatal warnings: if 2+ scheduled tasks share the same valid `CareTask.time` (`"HH:MM"`), scheduler adds a warning message (same pet vs different pets) to `DailyPlan.warnings` |
-| Streamlit ↔ logic | Connected: `app.py` persists domain objects in `st.session_state`; “Add pet” calls `Owner.add_pet`; “Add task” calls `Pet.add_task`; “Generate schedule” calls `Scheduler.build_plan` using tasks from the active pet; UI displays `DailyPlan.warnings` via `st.warning()` |
+| Streamlit ↔ logic | Connected: `app.py` keeps an `Owner` in `st.session_state` (with `Owner.pets`); add/list pets; add tasks with scheduler-relevant fields; completion UI drives domain methods (incl. recurrence); schedule uses `preview` + `build_plan` and optional **all-pets** task list for cross-pet warnings; warnings surfaced with `st.warning()` |
 | Tests | Added pytest coverage for core domain + scheduling (`tests/test_pawpal_system.py`) incl. time sorting, recurrence gating semantics, and conflict warnings |
 | CLI test script | `main.py` now runs multiple terminal “trials” to validate algorithm changes: due-day gating, recurrence auto-spawn, candidate filtering via `CareTask.is_due_on`, budget packing/skips, and same-time conflict warnings |
 | Living alignment doc | `DESIGN_CRITIQUE.md` tracks gaps and checklist |
@@ -79,7 +81,7 @@ PRD expects tests for core scheduling behavior; this repo now includes `tests/te
 ## Pitfalls called out in design review
 
 - **Owner.preferences** needs a concrete contract (keys / how `Scheduler` uses them) before it affects sorting.
-- **UML vs code relationships**: `CLASS_DIAGRAM.md` shows `Owner cares_for Pets`, but `pawpal_system.py` currently does not store pets on `Owner`. Decide whether the relationship is stored in-domain or managed by UI/session state; update UML/docs accordingly.
+- **UML vs code relationships**: `Owner.pets` + `Owner.add_pet` / `get_pet` are implemented in `pawpal_system.py` and reflected in [CLASS_DIAGRAM.md](CLASS_DIAGRAM.md); keep UI/session state aligned (e.g. selected pet name) without duplicating pet storage outside `Owner`.
 - **Ordering source of truth**: avoid implementing two different ordering rules via both `CareTask.__lt__` and `Scheduler._sort_candidates` that can drift over time.
 - **Edit tasks** implies stable **`CareTask.id`** and UI state that maps back to domain objects.
 - **Packing behavior expectations**: a simple greedy packer is fine, but it must produce consistent, explainable reasons for included vs skipped tasks.
@@ -92,24 +94,17 @@ Details: [DESIGN_CRITIQUE.md](DESIGN_CRITIQUE.md) (gaps, checklist, prompts).
 
 ## Next target feature workplan (for future agents)
 
-Target: **“sorting tasks by time, filtering by pet/status, handling recurring tasks, and basic conflict detection.”**
+**Done in-repo (high level):** due-day + completion gating via `CareTask.is_due_on`, `daily`/`weekly` recurrence + spawn, lightweight same-`HH:MM` conflict **warnings**, `PawPalBrain.filter_tasks` + `sort_tasks_by_time` helpers, Streamlit wired to preview + plan + all-pets scope.
 
-- **Where to implement**
- - **Core logic**: `pawpal_system.py` (`CareTask.time`, `sort_tasks_by_time`, `PawPalBrain.filter_tasks`, `Scheduler._sort_candidates`, `Scheduler._pack_into_budget`, reasons)
- - **Tests**: `tests/test_pawpal_system.py` (add recurrence + time sorting + filtering tests)
-  - **Design guidance**: `DESIGN_CRITIQUE.md` → sections:
-    - **“Workplan: sorting + filtering + recurring tasks + conflict detection”**
-    - **“Algorithm review (example): simplify `Scheduler._sort_candidates`”** (recommended refactor as filtering rules grow)
+**Still good next steps:**
 
-- **Suggested approach**
- - **Time sorting**: store a string `CareTask.time` in `"HH:MM"` format, and sort with a `key=lambda t: ...` (invalid/missing times should sort last).
- - **Recurring tasks**: completing a `daily`/`weekly` task spawns a new instance with `due_day` computed via `timedelta` (daily +1 day, weekly +7 days); scheduler filters out tasks whose `due_day` is in the future.
- - **Filtering**: keep “due today” filtering inside scheduler for correctness; use `CareTask.is_due_on(day)` as the single predicate for candidate inclusion (today-completion + `due_day` gating).
- - **Conflict detection**: treat “conflicts” as **warnings** (never exceptions). Current implementation flags 2+ scheduled tasks with the same valid `"HH:MM"` time; future work could extend this to interval overlap once start times and durations are used for scheduling.
+- **README “edit tasks”**: stable `CareTask.id` exists; add in-UI edit (or remove task) mapped to domain objects without breaking checkbox session keys.
+- **Scheduler ordering**: `_sort_candidates` currently uses priority, then duration, then title — **not** start time. Optionally add a tie-breaker / secondary key on `_hhmm_sort_key(time)` if plans should respect clock order when priorities tie.
+- **Owner.preferences**: define keys + wire into `_sort_candidates` (or documented non-use).
+- **Richer conflicts**: overlap by duration from `HH:MM`, not only duplicate start times.
+- **Where to implement**: `pawpal_system.py` + `tests/test_pawpal_system.py`; UI in `app.py`; track API drift in `DESIGN_CRITIQUE.md`.
 
-- **Acceptance checks**
-  - Run `pytest -q` and confirm new tests cover daily/weekly recurrence behaviors.
-  - Run `streamlit run app.py` and confirm a task completed today does not appear in today’s schedule when frequency makes it not due.
+**Acceptance checks:** `pytest -q`; manual `streamlit run app.py` — complete a recurring task today, confirm next instance has future `due_day` and today’s plan respects `is_due_on`.
 
 ---
 
@@ -143,5 +138,7 @@ streamlit run app.py
 | 2026-03-30 | Expanded `tests/test_pawpal_system.py` with focused tests for time sorting, daily recurrence due gating through `Scheduler`, and same-time conflict warnings |
 | 2026-03-30 | Updated `README.md` with “Smarter Scheduling” and “Testing PawPal+” sections (incl. `pytest -q` command and confidence rating) |
 | 2026-03-30 | Updated `.gitignore` to ignore repo-local operational files (`AGENTS.md`, `pytest.ini`) |
+| 2026-03-30 | Streamlit UI: removed redundant demo inputs; single Owner & pets section; task cards + **Done today** / recurrence undo; schedule scope **All pets**; `Scheduler.preview` pipeline |
+| 2026-03-30 | `AGENTS.md`: refreshed snapshot, `app.py` file-map blurb, **Owner.pets** pitfall correction, revised “next workplan”, `CLAUDE.md` / `code_review_by_claude.md` in file map |
 
 If you rename entrypoints or add a `tests/` layout, add one line here so the next agent knows.
