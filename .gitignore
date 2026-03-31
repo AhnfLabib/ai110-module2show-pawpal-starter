@@ -7,3 +7,6 @@ __pycache__/
 # Repo-local operational files
 /AGENTS.md
 /pytest.ini
+
+# Claude / local AI tooling (file or directory)
+.claude

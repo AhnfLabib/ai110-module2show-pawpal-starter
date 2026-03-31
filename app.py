@@ -1,55 +1,60 @@
 import streamlit as st
 
 from datetime import date
+from datetime import timedelta
 from uuid import uuid4
 
-from pawpal_system import CareTask, DailyConstraint, Owner, Pet, Scheduler
+from pawpal_system import CareTask, DailyConstraint, Owner, Pet, Scheduler, TaskFrequency
+
+SCOPE_ACTIVE_PET = "Active pet"
+SCOPE_ALL_PETS = "All pets"
+
+SPECIES_OPTIONS = ["dog", "cat", "other"]
+
+
+def _fmt_dash(value: str | None) -> str:
+    s = (value or "").strip()
+    return s if s else "—"
+
+
+def _fmt_due(due: date | None) -> str:
+    return due.isoformat() if due else "—"
+
+
+def _task_frequency_label(task: CareTask) -> str:
+    f = getattr(task, "frequency", None)
+    if f is None:
+        return "—"
+    return f.value if hasattr(f, "value") else str(f)
+
+
+def _priority_badge_md(priority: str) -> str:
+    pl = (priority or "").lower()
+    if pl == "high":
+        return ":red[**High**]"
+    if pl == "medium":
+        return ":orange[**Medium**]"
+    if pl == "low":
+        return ":green[**Low**]"
+    return f"**{priority}**"
+
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
 st.title("🐾 PawPal+")
+st.caption("Plan pet care under a time budget — priorities, optional times, recurring tasks, and plain-English reasons. See README.md for the full scenario and success criteria.")
 
-st.markdown(
-    """
-Welcome to the PawPal+ starter app.
-
-This file is intentionally thin. It gives you a working Streamlit app so you can start quickly,
-but **it does not implement the project logic**. Your job is to design the system and build it.
-
-Use this app as your interactive demo once your backend classes/functions exist.
-"""
-)
-
-with st.expander("Scenario", expanded=True):
+with st.expander("Project scenario (summary)", expanded=False):
     st.markdown(
         """
-**PawPal+** is a pet care planning assistant. It helps a pet owner plan care tasks
-for their pet(s) based on constraints like time, priority, and preferences.
+- Track care tasks with duration, priority, and optional start time (`HH:MM`).
+- Set how many minutes you have today; the scheduler builds a **DailyPlan** and explains inclusions and skips.
+- Recurring **daily** / **weekly** tasks spawn the next instance when you mark them completed today.
 
-You will design and implement the scheduling logic and connect it to this Streamlit UI.
+Details, setup, and tests: **README.md**.
 """
     )
 
-with st.expander("What you need to build", expanded=True):
-    st.markdown(
-        """
-At minimum, your system should:
-- Represent pet care tasks (what needs to happen, how long it takes, priority)
-- Represent the pet and the owner (basic info and preferences)
-- Build a plan/schedule for a day that chooses and orders tasks based on constraints
-- Explain the plan (why each task was chosen and when it happens)
-"""
-    )
-
-st.divider()
-
-st.subheader("Quick Demo Inputs (UI only)")
-owner_name = st.text_input("Owner name", value="Jordan")
-default_pet_name = st.text_input("Pet name", value="Mochi")
-default_species = st.selectbox("Species", ["dog", "cat", "other"])
-
-st.markdown("### Tasks")
-st.caption("Add a few tasks. In your final version, these should feed into your scheduler.")
 
 def get_or_init_owner(*, owner_name: str) -> Owner:
     existing = st.session_state.get("owner")
@@ -62,7 +67,6 @@ def get_or_init_owner(*, owner_name: str) -> Owner:
 
 
 def get_or_init_pet(*, owner: Owner, pet_name: str, species: str) -> Pet:
-    # Keep pets on the Owner so they persist across reruns/pages.
     for p in owner.pets:
         if p.name == pet_name:
             p.species = species
@@ -72,47 +76,70 @@ def get_or_init_pet(*, owner: Owner, pet_name: str, species: str) -> Pet:
     return pet
 
 
+st.subheader("Owner & pets")
+owner_name = st.text_input("Owner name", value="Jordan", help="Updates the `Owner` used for scheduling and session state.")
 owner = get_or_init_owner(owner_name=owner_name)
 
-st.markdown("### Pets")
 with st.form("add_pet_form", clear_on_submit=False):
-    new_pet_name = st.text_input("New pet name", value=default_pet_name).strip()
-    new_species = st.selectbox("New pet species", ["dog", "cat", "other"], index=["dog", "cat", "other"].index(default_species))
+    c1, c2 = st.columns(2)
+    with c1:
+        new_pet_name = st.text_input("Pet name (add to your household)", value="Mochi").strip()
+    with c2:
+        new_species = st.selectbox("Species", SPECIES_OPTIONS, index=0)
     add_pet_submitted = st.form_submit_button("Add pet")
 
 if add_pet_submitted:
-    try:
-        get_or_init_pet(owner=owner, pet_name=new_pet_name, species=new_species)
-        st.success(f"Added pet: {new_pet_name} ({new_species})")
-    except ValueError as e:
-        st.error(str(e))
+    if not new_pet_name:
+        st.error("Enter a pet name.")
+    else:
+        try:
+            get_or_init_pet(owner=owner, pet_name=new_pet_name, species=new_species)
+            st.success(f"Added pet: {new_pet_name} ({new_species})")
+        except ValueError as e:
+            st.error(str(e))
 
 pet_names = [p.name for p in owner.pets]
 if not pet_names:
-    st.info("No pets yet. Add one above.")
+    st.info("Add at least one pet above to create tasks and generate a schedule.")
     selected_pet_name: str | None = None
 else:
-    # Persist selection across reruns.
     if "selected_pet_name" not in st.session_state or st.session_state.selected_pet_name not in pet_names:
         st.session_state.selected_pet_name = pet_names[0]
-    selected_pet_name = st.selectbox("Active pet", options=pet_names, key="selected_pet_name")
+    selected_pet_name = st.selectbox(
+        "Pet you’re planning for (tasks below)",
+        options=pet_names,
+        key="selected_pet_name",
+    )
 
 active_pet: Pet | None = None
 if selected_pet_name:
     active_pet = owner.get_pet(selected_pet_name)
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    task_title = st.text_input("Task title", value="Morning walk")
-with col2:
-    duration = st.number_input("Duration (minutes)", min_value=1, max_value=240, value=20)
-with col3:
-    priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
+st.divider()
+st.subheader("Care tasks")
 
-if st.button("Add task"):
-    if not active_pet:
-        st.error("Add/select a pet before adding tasks.")
-    else:
+if not active_pet:
+    st.info("Add a pet first, then add tasks here.")
+else:
+    st.markdown(f"##### Tasks for {active_pet.name}")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        task_title = st.text_input("Task title", value="Morning walk")
+    with col2:
+        duration = st.number_input("Duration (minutes)", min_value=1, max_value=240, value=20)
+    with col3:
+        priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
+
+    col4, col5 = st.columns(2)
+    with col4:
+        task_time = st.text_input("Start time (optional, HH:MM)", value="").strip()
+    with col5:
+        frequency = st.selectbox("Frequency", ["once", "daily", "weekly", "as_needed"], index=0)
+
+    task_notes = st.text_input("Notes (optional)", value="")
+
+    if st.button("Add task", type="primary"):
         try:
             active_pet.add_task(
                 CareTask(
@@ -120,33 +147,104 @@ if st.button("Add task"):
                     title=str(task_title).strip() or "Untitled task",
                     duration_minutes=int(duration),
                     priority=str(priority),
+                    time=str(task_time),
+                    notes=str(task_notes),
+                    frequency=TaskFrequency(str(frequency)),
                 )
             )
             st.success(f"Added task to {active_pet.name}.")
         except ValueError as e:
             st.error(str(e))
 
-if active_pet and active_pet.tasks:
-    st.write(f"Current tasks for {active_pet.name}:")
-    st.table(
-        [
-            {
-                "id": t.id,
-                "title": t.title,
-                "duration_minutes": t.duration_minutes,
-                "priority": t.priority,
-                "completed": t.completed,
-            }
-            for t in active_pet.list_tasks(include_completed=True)
-        ]
-    )
-else:
-    st.info("No tasks yet. Add one above.")
+    if active_pet.tasks:
+        st.caption("Check **Done today** to record completion (daily/weekly tasks spawn the next due instance automatically).")
+
+        today = date.today()
+        for t in active_pet.list_tasks(include_completed=True):
+            with st.container(border=True):
+                completed_today_key = f"completed_today::{active_pet.name}::{t.id}"
+                default_completed_today = bool(t.completed and t.last_completed_day == today)
+
+                head_l, head_r = st.columns([0.22, 0.78])
+                with head_l:
+                    completed_today = st.checkbox(
+                        "Done today",
+                        key=completed_today_key,
+                        value=default_completed_today,
+                    )
+                with head_r:
+                    due = getattr(t, "due_day", None)
+                    time_disp = _fmt_dash(getattr(t, "time", ""))
+                    freq_disp = _task_frequency_label(t)
+                    st.markdown(f"#### {t.title}")
+                    st.markdown(
+                        f"{_priority_badge_md(t.priority)} &nbsp;·&nbsp; **{t.duration_minutes} min** &nbsp;·&nbsp; "
+                        f"Time **{time_disp}** &nbsp;·&nbsp; **{freq_disp}** &nbsp;·&nbsp; Due **{_fmt_due(due)}**"
+                    )
+
+                notes_text = (getattr(t, "notes", "") or "").strip()
+                if notes_text:
+                    with st.expander("Notes"):
+                        st.markdown(notes_text)
+
+            if completed_today and not default_completed_today:
+                next_task = t.mark_completed(day=today)
+                if next_task is not None:
+                    try:
+                        active_pet.add_task(next_task)
+                    except ValueError:
+                        pass
+                st.toast(f"Marked completed: {t.title}")
+
+            if (not completed_today) and default_completed_today:
+                freq = getattr(t, "frequency", None)
+                next_due = None
+                if freq == TaskFrequency.daily:
+                    next_due = today + timedelta(days=1)
+                elif freq == TaskFrequency.weekly:
+                    next_due = today + timedelta(days=7)
+
+                if next_due is not None:
+                    base_id = (t.id or "").strip()
+                    expected_next_id = f"{base_id}:{next_due.isoformat()}" if base_id else ""
+                    to_remove_idx: int | None = None
+                    for idx, candidate in enumerate(active_pet.tasks):
+                        if expected_next_id and candidate.id == expected_next_id:
+                            if getattr(candidate, "due_day", None) == next_due and not candidate.completed:
+                                to_remove_idx = idx
+                                break
+                        elif (
+                            not expected_next_id
+                            and candidate.title == t.title
+                            and getattr(candidate, "frequency", None) == freq
+                            and getattr(candidate, "due_day", None) == next_due
+                            and not candidate.completed
+                            and candidate.last_completed_day is None
+                        ):
+                            to_remove_idx = idx
+                            break
+                    if to_remove_idx is not None:
+                        active_pet.tasks.pop(to_remove_idx)
+
+                t.mark_incomplete()
+                t.last_completed_day = None
+                st.toast(f"Marked incomplete: {t.title}")
+
+    else:
+        st.info("No tasks yet. Add one above.")
 
 st.divider()
+st.subheader("Daily plan")
+st.caption("Uses `Scheduler.preview` and `Scheduler.build_plan` with your time budget and today’s date.")
 
-st.subheader("Build Schedule")
-st.caption("This button should call your scheduling logic once you implement it.")
+schedule_scope = st.radio(
+    "Task set for scheduling",
+    options=[SCOPE_ACTIVE_PET, SCOPE_ALL_PETS],
+    index=0,
+    horizontal=True,
+    key="schedule_scope",
+    help='"All pets" aggregates tasks across every pet for one combined plan (and cross-pet time warnings).',
+)
 
 minutes_available = st.number_input(
     "Minutes available today",
@@ -157,37 +255,138 @@ minutes_available = st.number_input(
 )
 
 if st.button("Generate schedule"):
-    if not active_pet:
-        st.error("Add/select a pet before generating a schedule.")
-    elif not active_pet.list_tasks(include_completed=False):
-        st.error("Add at least one incomplete task before generating a schedule.")
+    if not owner.pets:
+        st.error("Add at least one pet before generating a schedule.")
+    elif schedule_scope == SCOPE_ACTIVE_PET and not active_pet:
+        st.error("Select an active pet.")
     else:
-        pet = active_pet
-        tasks = pet.list_tasks(include_completed=False)
-
+        pet = active_pet if active_pet is not None else owner.pets[0]
         constraint = DailyConstraint(minutes_available=int(minutes_available), day=date.today())
         scheduler = Scheduler()
-        plan = scheduler.build_plan(owner=owner, pet=pet, tasks=tasks, constraint=constraint)
 
-        st.success(plan.summary())
-        if getattr(plan, "warnings", None):
-            st.markdown("### Warnings")
-            for w in plan.warnings:
-                st.warning(w)
+        scope = st.session_state.get("schedule_scope", SCOPE_ACTIVE_PET)
+        if scope == SCOPE_ALL_PETS:
+            all_tasks = owner.all_tasks()
+        else:
+            all_tasks = pet.list_tasks(include_completed=True)
 
-        st.markdown("### Scheduled tasks")
-        for task, reason in plan.iter_with_reasons():
-            st.markdown(f"- **{task.title}** ({task.duration_minutes} min, {task.priority}): {reason}")
+        preview = scheduler.preview(owner=owner, pet=pet, tasks=all_tasks, constraint=constraint)
 
-        if plan.skipped_tasks:
-            st.markdown("### Skipped tasks")
+        candidates = list(preview.get("candidates", []))
+        filtered_out = list(preview.get("filtered_out", []))
+        skipped_for_budget = list(preview.get("skipped_for_budget", []))
+        invalid_duration = list(preview.get("invalid_duration", []))
+
+        if not candidates:
+            st.error("No due tasks to schedule for today. Add tasks or adjust completion / due dates.")
+            if filtered_out:
+                st.warning("Some tasks were filtered out (not due or already completed for today).")
+                st.table(
+                    [
+                        {
+                            "title": t.title,
+                            "priority": t.priority,
+                            "duration_minutes": t.duration_minutes,
+                            "time": getattr(t, "time", ""),
+                            "due_day": getattr(t, "due_day", None),
+                            "completed": t.completed,
+                        }
+                        for t in filtered_out
+                    ]
+                )
+        else:
+            st.markdown("### Candidates (due today, scheduler order)")
+            st.success(f"{len(candidates)} task(s) due today before packing.")
+
             st.table(
                 [
                     {
+                        "order": idx + 1,
                         "title": t.title,
-                        "duration_minutes": t.duration_minutes,
                         "priority": t.priority,
+                        "duration_minutes": t.duration_minutes,
+                        "time": getattr(t, "time", ""),
+                        "due_day": getattr(t, "due_day", None),
+                        "completed": t.completed,
                     }
-                    for t in plan.skipped_tasks
+                    for idx, t in enumerate(candidates)
                 ]
             )
+
+            if filtered_out:
+                st.warning(
+                    f"{len(filtered_out)} task(s) filtered out (not due yet, or already completed today)."
+                )
+                st.table(
+                    [
+                        {
+                            "title": t.title,
+                            "priority": t.priority,
+                            "duration_minutes": t.duration_minutes,
+                            "time": getattr(t, "time", ""),
+                            "due_day": getattr(t, "due_day", None),
+                            "completed": t.completed,
+                        }
+                        for t in filtered_out
+                    ]
+                )
+
+            if invalid_duration:
+                st.warning(f"{len(invalid_duration)} task(s) have non-positive duration and will be skipped.")
+
+            if skipped_for_budget:
+                st.warning(
+                    f"With a {constraint.minutes_available} minute budget, "
+                    f"{len(skipped_for_budget)} due task(s) would be skipped after higher-priority packing."
+                )
+                st.table(
+                    [
+                        {
+                            "title": t.title,
+                            "priority": t.priority,
+                            "duration_minutes": t.duration_minutes,
+                            "time": getattr(t, "time", ""),
+                        }
+                        for t in skipped_for_budget
+                    ]
+                )
+
+            plan = scheduler.build_plan(owner=owner, pet=pet, tasks=all_tasks, constraint=constraint)
+
+            st.divider()
+            st.subheader("Plan result")
+
+            st.success(plan.summary())
+            if getattr(plan, "warnings", None):
+                st.markdown("### Warnings")
+                for w in plan.warnings:
+                    st.warning(w)
+
+            st.markdown("### Scheduled tasks (with reasons)")
+            st.table(
+                [
+                    {
+                        "order": idx + 1,
+                        "title": task.title,
+                        "duration_minutes": task.duration_minutes,
+                        "priority": task.priority,
+                        "time": getattr(task, "time", ""),
+                        "reason": reason,
+                    }
+                    for idx, (task, reason) in enumerate(plan.iter_with_reasons())
+                ]
+            )
+
+            if plan.skipped_tasks:
+                st.markdown("### Skipped tasks (budget)")
+                st.table(
+                    [
+                        {
+                            "title": t.title,
+                            "duration_minutes": t.duration_minutes,
+                            "priority": t.priority,
+                            "time": getattr(t, "time", ""),
+                        }
+                        for t in plan.skipped_tasks
+                    ]
+                )

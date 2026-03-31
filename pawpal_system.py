@@ -236,6 +236,40 @@ class Scheduler:
     Produces a DailyPlan from owner context, pet, tasks, and a daily time budget.
     """
 
+    def preview(
+        self,
+        *,
+        owner: Owner,
+        pet: Pet,
+        tasks: Sequence[CareTask],
+        constraint: DailyConstraint,
+    ) -> Dict[str, Any]:
+        """
+        Non-mutating helper for UIs:
+        - shows which tasks are considered "due" for the day,
+        - shows the sorted candidate order,
+        - estimates what would be skipped under the time budget.
+
+        Returns a dict to keep the UI lightweight and avoid introducing new public dataclasses.
+        """
+
+        candidates = self._sort_candidates(list(tasks), owner=owner, pet=pet, constraint=constraint)
+        filtered_out = [t for t in tasks if t not in candidates]
+
+        selected, skipped, used = self._pack_into_budget(candidates, constraint.minutes_available)
+        invalid_duration = [t for t in candidates if t.duration_minutes <= 0]
+        skipped_for_budget = [t for t in skipped if t.duration_minutes > 0]
+
+        return {
+            "candidates": candidates,
+            "filtered_out": filtered_out,
+            "selected_preview": selected,
+            "skipped_preview": skipped,
+            "skipped_for_budget": skipped_for_budget,
+            "invalid_duration": invalid_duration,
+            "minutes_used_preview": used,
+        }
+
     def build_plan(
         self,
         owner: Owner,
