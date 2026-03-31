@@ -1,48 +1,40 @@
-# PawPal+ (Module 2 Project)
+# PawPal+
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+**PawPal+** is a Streamlit app for planning daily pet-care tasks under a **time budget**, using **priorities**, optional **start times**, and **recurring** tasks. It produces a daily plan and explains why tasks were included or skipped.
 
-## Scenario
+## Demo
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+![PawPal+ running](app_running.png)
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+## Features (what’s implemented)
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+### Task & household management
 
-## What you will build
+- **Owner + multiple pets**: `Owner` stores `pets`; each `Pet` stores its own tasks.
+- **Add tasks with scheduling inputs**: title, duration (minutes), priority (low/medium/high), optional start time (`HH:MM`), frequency (once/daily/weekly/as_needed), optional notes.
+- **Done today tracking**: marking “Done today” records `last_completed_day` and prevents tasks completed *today* from being scheduled again today.
 
-Your final app should:
+### Smarter scheduling algorithms
 
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
+The scheduling logic lives in `pawpal_system.py` (pure Python; no Streamlit imports).
 
-## Smarter Scheduling
+- **Candidate filtering (due-ness)**: `CareTask.is_due_on(day)` determines if a task is eligible on a given day.
+  - Tasks with a future `due_day` are excluded until that day.
+  - Tasks completed **today** are excluded today (tasks completed on earlier days may appear again—this is current behavior and is covered by tests).
+- **Ordering before packing**: candidates are sorted by:
+  - priority (high → low),
+  - then shorter duration first,
+  - then title (alphabetical).
+- **Greedy packing into a time budget**: tasks are selected in sorted order until the daily minutes budget is exhausted; remaining due tasks are skipped.
+- **Explainable outputs**: scheduled tasks include plain-English reasons; skipped tasks also record skip reasons.
+- **Lightweight time conflict warnings**: if 2+ scheduled tasks share the same valid `HH:MM` start time, the plan emits **non-fatal warnings** (invalid times are ignored).
 
-This repo now includes a “smarter” backend scheduler (see `pawpal_system.py`, summarized in `AGENTS.md`) that goes beyond simple priority sorting:
+### Recurring tasks (daily/weekly)
 
-- **Time-budget planning with explanations**: builds a `DailyPlan` under a minutes-available constraint and records reasons for scheduled vs skipped tasks.
-- **Due-date gating + completion filtering**: centralizes “is this task due today?” logic (so completed/not-due tasks don’t reappear).
-- **Recurring tasks**: `daily`/`weekly` tasks automatically spawn their next instance when completed.
-- **Time-of-day ordering + lightweight conflict warnings**: tasks can optionally include a `"HH:MM"` time; the plan can surface non-fatal warnings when multiple tasks share the same start time.
-- **Test coverage + CLI harness**: key behaviors are covered by pytest (`tests/`) and can be exercised via `main.py` scenarios.
+- Marking a task as completed will **spawn the next instance** for `daily` (+1 day) and `weekly` (+7 days) frequencies by creating a new `CareTask` with an updated `due_day`.
+- The Streamlit UI also supports undo: if you uncheck “Done today”, it removes the auto-spawned next instance when possible.
 
-## Testing PawPal+
-
-Run the test suite with:
-
-```bash
-pytest -q
-```
-
-The tests cover core domain and scheduling behavior (e.g., task creation/completion, candidate filtering/due-ness, recurrence auto-spawn, budget packing, and related planner outputs). Based on the latest run (**16 passed**), current reliability confidence: **★★★★☆ (4/5)**.
-
-## Getting started
+## How to run the app (visual UI)
 
 ### Setup
 
@@ -52,12 +44,45 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Suggested workflow
+### Start Streamlit
 
-1. Read the scenario carefully and identify requirements and edge cases.
-2. Draft a UML diagram (classes, attributes, methods, relationships).
-3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
-5. Add tests to verify key behaviors.
-6. Connect your logic to the Streamlit UI in `app.py`.
-7. Refine UML so it matches what you actually built.
+```bash
+streamlit run app.py
+```
+
+Streamlit will print a local URL (typically `http://localhost:8501`).
+
+## Testing PawPal+
+
+Run the automated tests:
+
+```bash
+pytest -q
+```
+
+The test suite (`tests/test_pawpal_system.py`) validates core domain + scheduling behaviors:
+
+- task creation/validation (owner/pet/task constraints)
+- completion tracking (“completed today” filtering)
+- due-day gating (`is_due_on`)
+- daily/weekly recurrence spawning
+- greedy budget packing and skipped tasks + skip reasons
+- time parsing/sorting helpers and conflict-warning behavior
+
+Based on the latest run (**16 passed**), confidence in current scheduling reliability: **★★★★☆ (4/5)**.
+
+## CLI trial harness (optional)
+
+If you want to see scheduler output in the terminal across a few scenarios:
+
+```bash
+python main.py
+```
+
+## Project structure (quick map)
+
+- `app.py`: Streamlit UI (builds domain objects, stores them in session state, calls scheduler)
+- `pawpal_system.py`: domain model + scheduler (pure Python)
+- `tests/test_pawpal_system.py`: pytest coverage for domain + scheduler
+- `CLASS_DIAGRAM.md`: UML model used during design
+- `AGENTS.md`: implementation snapshot and agent-oriented notes

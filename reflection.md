@@ -23,8 +23,8 @@
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+- **Constraints considered:** (1) **daily time budget** (`DailyConstraint.minutes_available`), (2) **priority** (high/medium/low → `priority_score`), and (3) basic **eligibility** rules like “not due yet” (`due_day`) and “already completed today” (`last_completed_day`). Tasks with invalid durations (≤0) are skipped.
+- **What mattered most:** I prioritized **time budget + priority** first because the PRD’s core promise is “fit what matters into limited time.” Due/completion filters keep plans realistic, and preferences are a planned extension once they have a clear contract + tests.
 
 **b. Tradeoffs**
 
@@ -37,13 +37,13 @@
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+- **Cursor chat experience:** I used Cursor chat as a “pair designer” to turn the PRD + UML into concrete APIs, then iterated quickly by asking for small changes with `@` file context (e.g. “make `Scheduler.build_plan` pure and testable,” “add skipped tasks + reasons,” “write pytest cases for overflow and due dates”).
+- **Most effective feature for building the scheduler:** Having chat read the *exact* code context (the current `pawpal_system.py` + failing tests) and propose targeted edits/tests was the biggest accelerator—especially for getting the scheduler’s **sorting + packing** behavior and edge cases (0 minutes, negative durations, due dates) consistent.
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+- **Example I rejected/modified:** An AI suggestion pushed toward a more “optimal” scheduler (knapsack-style selection or modeling time overlaps). I kept the design **greedy + explainable** (priority-first pack) and only added lightweight time conflict *warnings* for exact start-time matches, because that preserves a clean, testable core and matches the project scope.
+- **How I verified:** I encoded the intended behavior as pytest cases (priority order under tight budgets, overflow → `skipped_tasks`, due-day filtering, completed-today filtering). If a change broke a test or made reasons inconsistent with the actual selection, I adjusted the design back to a single clear contract.
 
 ---
 
@@ -51,13 +51,13 @@
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+- **Behaviors:** empty inputs, zero/negative budgets and durations, priority sorting under limited minutes, overflow → `skipped_tasks`, due-date filtering, completed-today filtering, and recurrence spawning for daily/weekly tasks.
+- **Why important:** these are the failure modes that would silently produce a “bad plan” for a user, so tests act like the scheduler’s spec and keep the logic stable while the UI evolves.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+- **Confidence:** fairly confident for the current v1 scope (priority-first packing + due/completion rules) because the core behaviors are covered by deterministic unit tests.
+- **Next edge cases:** tie-breaking rules (same priority), preference-based reordering once preferences are implemented, multi-pet scheduling interactions, and richer time logic (overlaps vs exact start times).
 
 ---
 
@@ -65,12 +65,12 @@
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+- I’m most satisfied with keeping the scheduler **pure and testable** (no Streamlit dependency), while still producing user-facing outputs (`DailyPlan`, `skipped_tasks`, reasons/warnings) that the UI can display directly.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+- I would formalize **owner preferences** into a small, versioned contract (with 1–2 behaviors + tests), and improve time handling beyond exact-match warnings (true overlap checks and/or optional time windows).
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+- Collaborating with powerful AI made me faster, but it only stayed “clean” when I acted as the **lead architect**: define contracts, keep one source of truth for ordering/selection, demand tests for new behavior, and resist over-engineering that expands scope without improving the user experience.
